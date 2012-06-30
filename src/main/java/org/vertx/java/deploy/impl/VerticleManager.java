@@ -26,7 +26,6 @@ import org.vertx.java.core.http.HttpClientRequest;
 import org.vertx.java.core.http.HttpClientResponse;
 import org.vertx.java.core.impl.BlockingAction;
 import org.vertx.java.core.impl.Context;
-import org.vertx.java.core.impl.DeploymentHandle;
 import org.vertx.java.core.impl.VertxInternal;
 import org.vertx.java.core.json.DecodeException;
 import org.vertx.java.core.json.JsonObject;
@@ -50,7 +49,6 @@ import java.net.URL;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -159,11 +157,11 @@ public class VerticleManager {
                      int instances, File currentModDir,
                      final Handler<String> doneHandler) {
     Context ctx = vertx.getOrAssignContext();
-    doDeploy(worker, main, config, urls, instances, currentModDir, ctx, doneHandler);
+    doDeploy(worker, main, null, config, urls, instances, currentModDir, ctx, doneHandler);
   }
 
   public synchronized void undeployAll(final Handler<Void> doneHandler) {
-    final UndeployCount count = new UndeployCount();
+    final CountingCompletionHandler count = new CountingCompletionHandler(vertx);
     if (!deployments.isEmpty()) {
       // We do it this way since undeploy is itself recursive - we don't want
       // to attempt to undeploy the same verticle twice if it's a child of
@@ -173,7 +171,7 @@ public class VerticleManager {
         count.incRequired();
         undeploy(name, new SimpleHandler() {
           public void handle() {
-            count.undeployed();
+            count.complete();
           }
         });
       }
@@ -258,7 +256,7 @@ public class VerticleManager {
           if (urls == null) {
             return false;
           }
-          doDeploy(worker, main, config,
+          doDeploy(worker, main, modName, config,
                    urls.toArray(new URL[urls.size()]), instances, modDir, ctx, doneHandler);
           return true;
         } else {
@@ -268,6 +266,10 @@ public class VerticleManager {
     };
 
     deployModuleAction.run();
+  }
+
+  synchronized Map<String, Deployment> listDeployments() {
+    return new HashMap<>(deployments);
   }
 
   private JsonObject loadModuleConfig(String modName, File modDir) {
@@ -518,6 +520,7 @@ public class VerticleManager {
   }
 
   private synchronized void doDeploy(boolean worker, final String main,
+                                     final String modName,
                                      final JsonObject config, final URL[] urls,
                                      int instances,
                                      final File modDir,
@@ -567,7 +570,7 @@ public class VerticleManager {
     final AggHandler aggHandler = new AggHandler();
 
     String parentDeploymentName = getDeploymentName();
-    final Deployment deployment = new Deployment(deploymentName, verticleFactory,
+    final Deployment deployment = new Deployment(deploymentName, modName, instances, verticleFactory,
         config == null ? new JsonObject() : config.copy(), urls, modDir, parentDeploymentName);
     deployments.put(deploymentName, deployment);
     if (parentDeploymentName != null) {
@@ -657,14 +660,14 @@ public class VerticleManager {
   }
 
   private void doUndeploy(String name, final Handler<Void> doneHandler) {
-    UndeployCount count = new UndeployCount();
+    CountingCompletionHandler count = new CountingCompletionHandler(vertx);
     doUndeploy(name, count);
     if (doneHandler != null) {
       count.setHandler(doneHandler);
     }
   }
 
-  private void doUndeploy(String name, final UndeployCount count) {
+  private void doUndeploy(String name, final CountingCompletionHandler count) {
 
     final Deployment deployment = deployments.remove(name);
 
@@ -684,7 +687,7 @@ public class VerticleManager {
             } catch (Throwable t) {
               vertx.reportException(t);
             }
-            count.undeployed();
+            count.complete();
             LoggerFactory.removeLogger(holder.loggerName);
             holder.context.runCloseHooks();
           }
@@ -696,83 +699,6 @@ public class VerticleManager {
       Deployment parent = deployments.get(deployment.parentDeploymentName);
       if (parent != null) {
         parent.childDeployments.remove(name);
-      }
-    }
-  }
-
-  private static class VerticleHolder implements DeploymentHandle {
-    final Deployment deployment;
-    final Context context;
-    final Verticle verticle;
-    final String loggerName;
-    final Logger logger;
-    //We put the config here too so it's still accessible to the verticle after it has been deployed
-    //(deploy is async)
-    final JsonObject config;
-
-    private VerticleHolder(Deployment deployment, Context context, Verticle verticle, String loggerName,
-                           Logger logger, JsonObject config) {
-      this.deployment = deployment;
-      this.context = context;
-      this.verticle = verticle;
-      this.loggerName = loggerName;
-      this.logger = logger;
-      this.config = config;
-    }
-
-    public void reportException(Throwable t) {
-      deployment.factory.reportException(t);
-    }
-  }
-
-  private static class Deployment {
-    final String name;
-    final VerticleFactory factory;
-    final JsonObject config;
-    final URL[] urls;
-    final File modDir;
-    final List<VerticleHolder> verticles = new ArrayList<>();
-    final List<String> childDeployments = new ArrayList<>();
-    final String parentDeploymentName;
-
-    private Deployment(String name, VerticleFactory factory, JsonObject config,
-                       URL[] urls, File modDir, String parentDeploymentName) {
-      this.name = name;
-      this.factory = factory;
-      this.config = config;
-      this.urls = urls;
-      this.modDir = modDir;
-      this.parentDeploymentName = parentDeploymentName;
-    }
-  }
-
-  private class UndeployCount {
-    int count;
-    int required;
-    Handler<Void> doneHandler;
-    Context context = vertx.getOrAssignContext();
-
-    synchronized void undeployed() {
-      count++;
-      checkDone();
-    }
-
-    synchronized void incRequired() {
-      required++;
-    }
-
-    synchronized void setHandler(Handler<Void> doneHandler) {
-      this.doneHandler = doneHandler;
-      checkDone();
-    }
-
-    void checkDone() {
-      if (doneHandler != null && count == required) {
-        context.execute(new Runnable() {
-          public void run() {
-            doneHandler.handle(null);
-          }
-        });
       }
     }
   }
