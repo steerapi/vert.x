@@ -163,7 +163,7 @@ public class VerticleManager {
   }
 
   public synchronized void undeployAll(final Handler<Void> doneHandler) {
-    final CountingCompletionHandler count = new CountingCompletionHandler(vertx);
+    final CountingCompletionHandler count = new CountingCompletionHandler(vertx.getOrAssignContext());
     if (!deployments.isEmpty()) {
       // We do it this way since undeploy is itself recursive - we don't want
       // to attempt to undeploy the same verticle twice if it's a child of
@@ -673,7 +673,7 @@ public class VerticleManager {
   }
 
   private void doUndeploy(String name, final Handler<Void> doneHandler) {
-    CountingCompletionHandler count = new CountingCompletionHandler(vertx);
+    CountingCompletionHandler count = new CountingCompletionHandler(vertx.getOrAssignContext());
     doUndeploy(name, count);
     if (doneHandler != null) {
       count.setHandler(doneHandler);

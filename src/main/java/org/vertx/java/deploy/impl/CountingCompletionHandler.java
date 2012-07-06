@@ -25,16 +25,15 @@ import org.vertx.java.core.impl.VertxInternal;
  */
 public class CountingCompletionHandler {
 
-  private VertxInternal vertx;
+  private final Context context;
 
-  CountingCompletionHandler(VertxInternal vertx) {
-    this.vertx = vertx;
+  CountingCompletionHandler(Context context) {
+    this.context = context;
   }
 
   int count;
   int required;
   Handler<Void> doneHandler;
-  Context context = vertx.getOrAssignContext();
 
   synchronized void complete() {
     count++;
