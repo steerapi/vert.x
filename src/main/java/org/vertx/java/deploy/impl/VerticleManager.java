@@ -82,6 +82,8 @@ public class VerticleManager {
   private Map<String, VerticleFactory> factories;
   private final String defaultRepo;
 
+  private final Redeployer2 redeployer;
+
   public VerticleManager(VertxInternal vertx) {
     this(vertx, null);
   }
@@ -100,9 +102,9 @@ public class VerticleManager {
       modRoot = new File(modDir);
     } else {
       // Default to local module directory called 'mods'
-      modRoot = new File("./mods");
+      modRoot = new File("mods");
     }
-
+    this.redeployer = new Redeployer2(vertx, this);
     this.factories = new HashMap<>();
 
     // Find and load VerticleFactories
@@ -256,8 +258,19 @@ public class VerticleManager {
           if (urls == null) {
             return false;
           }
+          final File finalModDir = modDir;
+          Handler<String> handler = new Handler<String>() {
+            public void handle(String res) {
+              if (currentModDir == null) {
+                redeployer.moduleDeployed(finalModDir, deployments.get(res));
+              }
+              if (doneHandler != null) {
+                doneHandler.handle(res);
+              }
+            }
+          };
           doDeploy(worker, main, modName, config,
-                   urls.toArray(new URL[urls.size()]), instances, modDir, ctx, doneHandler);
+                   urls.toArray(new URL[urls.size()]), instances, modDir, ctx, handler);
           return true;
         } else {
           return false;

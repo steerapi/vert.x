@@ -17,6 +17,7 @@
 package org.vertx.java.deploy.impl;
 
 import org.vertx.java.core.Handler;
+import org.vertx.java.core.SimpleHandler;
 import org.vertx.java.core.Vertx;
 import org.vertx.java.core.json.JsonObject;
 import org.vertx.java.core.logging.Logger;
@@ -50,15 +51,17 @@ public class Redeployer2 {
 
   private static final Logger log = LoggerFactory.getLogger(Redeployer2.class);
 
-  private final Map<String, List<Deployment>> watchedDeployments = new HashMap<>();
+  private final VerticleManager verticleManager;
+  private final Map<Path, List<Deployment>> watchedDeployments = new HashMap<>();
   private final Map<WatchKey, Path> watchKeys = new HashMap<>();
   private final Map<Path, Path> moduleDirs = new HashMap<>();
   private final WatchService watchService;
   private final Vertx vertx;
 
-  public Redeployer2(Vertx vertx, File modRoot) throws IOException {
+  public Redeployer2(Vertx vertx, VerticleManager verticleManager) {
+    this.verticleManager = verticleManager;
     try {
-      watchService = FileSystems.getFileSystem(modRoot.toURI()).newWatchService();
+      watchService = FileSystems.getDefault().newWatchService();
     } catch (IOException e) {
       log.error("Failed to create redeployer", e);
       throw new IllegalArgumentException(e.getMessage());
@@ -72,14 +75,15 @@ public class Redeployer2 {
     });
   }
 
-  public synchronized void moduleDeployed(String modDir, Deployment deployment) {
+  public synchronized void moduleDeployed(File fmodDir, Deployment deployment) {
+    log.info("Module deployed " + fmodDir);
+    Path modDir = fmodDir.toPath();
     List<Deployment> deps = watchedDeployments.get(modDir);
     if (deps == null) {
       deps = new ArrayList<>();
       watchedDeployments.put(modDir, deps);
-      Path pModDir = Paths.get(modDir);
       try {
-        registerAll(pModDir);
+        registerAll(modDir);
       } catch (IOException e) {
         log.error("Failed to register", e);
         throw new IllegalStateException(e.getMessage());
@@ -88,12 +92,12 @@ public class Redeployer2 {
     deps.add(deployment);
   }
 
-  public synchronized void moduleUndeployed(String modDir, Deployment deployment) {
+  public synchronized void moduleUndeployed(Path modDir, Deployment deployment) {
 
   }
 
   void checkEvents() {
-    Set<String> toReload = new HashSet<>();
+    Set<Path> toReload = new HashSet<>();
     while (true) {
       WatchKey key = watchService.poll();
       if (key == null) {
@@ -101,9 +105,27 @@ public class Redeployer2 {
       }
       handleEvent(key, toReload);
     }
+    for (Path modulePath: toReload) {
+      reload(modulePath);
+    }
   }
 
-  private void handleEvent(WatchKey key, Set<String> toReload) {
+  private void reload(Path modulePath) {
+    List<Deployment> deployments = watchedDeployments.get(modulePath);
+    if (deployments == null) {
+      throw new IllegalStateException("Cannot find any deployments for path: " + modulePath);
+    }
+    for (final Deployment deployment: deployments) {
+      verticleManager.undeploy(deployment.name, new SimpleHandler() {
+        public void handle() {
+          verticleManager.deployMod(deployment.modName, deployment.config, deployment.instances,
+                                    null, null);
+        }
+      });
+    }
+  }
+
+  private void handleEvent(WatchKey key, Set<Path> toReload) {
     Path dir = watchKeys.get(key);
     if (dir == null) {
       throw new IllegalStateException("Unrecognised watch key " + dir);
@@ -117,16 +139,21 @@ public class Redeployer2 {
         continue;
       }
 
+      log.info("got event in directory " + dir);
+
+      Path moduleDir = moduleDirs.get(dir);
+      log.info("module dir is " + moduleDir);
+
       @SuppressWarnings("unchecked")
       WatchEvent<Path> ev = (WatchEvent<Path>) event;
       Path name = ev.context();
 
       Path child = dir.resolve(name);
 
-      Path parent = moduleDirs.get(child);
-      if (parent == null) {
-        throw new IllegalStateException("Cannot find parent for " + child);
-      }
+//      Path parent = moduleDirs.get(child);
+//      if (parent == null) {
+//        throw new IllegalStateException("Cannot find parent for " + child);
+//      }
 
       if (kind == StandardWatchEventKinds.ENTRY_MODIFY) {
         log.info("entry modified: " + child);
@@ -141,8 +168,10 @@ public class Redeployer2 {
           }
         }
       } else if (kind == StandardWatchEventKinds.ENTRY_DELETE) {
+        log.info("entry deleted: " + child);
         moduleDirs.remove(child);
       }
+      //toReload.add(parent);
     }
 
     boolean valid = key.reset();
@@ -152,6 +181,7 @@ public class Redeployer2 {
   }
 
   private void register(Path modDir, Path dir) throws IOException {
+    log.info("registering " + dir);
     WatchKey key = dir.register(watchService, StandardWatchEventKinds.ENTRY_CREATE,
         StandardWatchEventKinds.ENTRY_MODIFY, StandardWatchEventKinds.ENTRY_DELETE);
     watchKeys.put(key, dir);
@@ -159,6 +189,7 @@ public class Redeployer2 {
   }
 
   private void registerAll(final Path modDir) throws IOException {
+    log.info("registering all " + modDir);
     Files.walkFileTree(modDir, new SimpleFileVisitor<Path>() {
       @Override
       public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
