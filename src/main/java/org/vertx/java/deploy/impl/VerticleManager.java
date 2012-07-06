@@ -261,11 +261,8 @@ public class VerticleManager {
           final File finalModDir = modDir;
           Handler<String> handler = new Handler<String>() {
             public void handle(String res) {
-              if (currentModDir == null) {
+              if (currentModDir == null && res != null) {
                 redeployer.moduleDeployed(finalModDir, deployments.get(res));
-              }
-              if (doneHandler != null) {
-                doneHandler.handle(res);
               }
             }
           };
@@ -283,6 +280,10 @@ public class VerticleManager {
 
   synchronized Map<String, Deployment> listDeployments() {
     return new HashMap<>(deployments);
+  }
+
+  boolean hasDeployment(String deploymentID) {
+    return deployments.containsKey(deploymentID);
   }
 
   private JsonObject loadModuleConfig(String modName, File modDir) {
@@ -552,7 +553,7 @@ public class VerticleManager {
 
     final String deploymentName = "deployment-" + UUID.randomUUID().toString();
 
-    log.debug("Deploying name : " + deploymentName + " main: " + main +
+    log.info("Deploying name : " + deploymentName + " main: " + main +
         " instances: " + instances);
 
     if (!factories.containsKey(language)) {
@@ -573,6 +574,7 @@ public class VerticleManager {
             context.execute(new Runnable() {
               public void run() {
                 doneHandler.handle(deploymentName);
+                log.info("deployed ok");
               }
             });
           }
@@ -615,6 +617,7 @@ public class VerticleManager {
               public void handle() {
                 if (doneHandler != null) {
                   doneHandler.handle(null);
+                  log.info("failed to deploy");
                 }
               }
             });
@@ -631,15 +634,16 @@ public class VerticleManager {
               setPathAdjustment(modDir);
             }
             verticle.start();
+            aggHandler.started();
           } catch (Throwable t) {
             vertx.reportException(t);
             doUndeploy(deploymentName, new SimpleHandler() {
               public void handle() {
                 doneHandler.handle(null);
+                log.info("failed to deploy");
               }
             });
           }
-          aggHandler.started();
         }
       };
 

@@ -46,15 +46,17 @@ import java.util.Set;
 
 /**
  * @author <a href="http://tfox.org">Tim Fox</a>
+ *
+ * TODO check the threading, synchronized etc
  */
 public class Redeployer2 {
 
   private static final Logger log = LoggerFactory.getLogger(Redeployer2.class);
 
-  private static final long GRACE_PERIOD = 1000;
+  private static final long GRACE_PERIOD = 500;
 
   private final VerticleManager verticleManager;
-  private final Map<Path, List<Deployment>> watchedDeployments = new HashMap<>();
+  private final Map<Path, Set<Deployment>> watchedDeployments = new HashMap<>();
   private final Map<WatchKey, Path> watchKeys = new HashMap<>();
   private final Map<Path, Path> moduleDirs = new HashMap<>();
   private final WatchService watchService;
@@ -73,21 +75,21 @@ public class Redeployer2 {
     this.vertx = vertx;
     vertx.setPeriodic(200, new Handler<Long>() {
       public void handle(Long id) {
-        checkEvents();
+        try {
+          checkEvents();
+        } catch (Exception e) {
+          log.error("Failed to check events", e);
+        }
       }
     });
   }
 
   public synchronized void moduleDeployed(File fmodDir, Deployment deployment) {
-    if (deployment == null) {
-      log.error("deployment is null");
-      return;
-    }
     log.info("Module deployed " + fmodDir);
     Path modDir = fmodDir.toPath();
-    List<Deployment> deps = watchedDeployments.get(modDir);
+    Set<Deployment> deps = watchedDeployments.get(modDir);
     if (deps == null) {
-      deps = new ArrayList<>();
+      deps = new HashSet<>();
       watchedDeployments.put(modDir, deps);
       try {
         registerAll(modDir, modDir);
@@ -132,23 +134,41 @@ public class Redeployer2 {
   }
 
   private void reload(Path modulePath) {
-    List<Deployment> deployments = watchedDeployments.get(modulePath);
+    log.info("reloading " + modulePath);
+    final Set<Deployment> deployments = watchedDeployments.get(modulePath);
     if (deployments == null) {
       throw new IllegalStateException("Cannot find any deployments for path: " + modulePath);
     }
-    List<Deployment> copied = new ArrayList<>(deployments);
-    // We clear the old deployments but keep the entry in the map since the directory
-    // is still being watched
-    deployments.clear();
-    for (final Deployment deployment: copied) {
-      log.info("verticle manager is " + verticleManager + " dep name is " + deployment.name);
-      verticleManager.undeploy(deployment.name, new SimpleHandler() {
-        public void handle() {
-          verticleManager.deployMod(deployment.modName, deployment.config, deployment.instances,
-                                    null, null);
-        }
-      });
+    for (final Deployment deployment: deployments) {
+      log.info("undeploying " + deployment.name);
+      if (verticleManager.hasDeployment(deployment.name)) {
+        verticleManager.undeploy(deployment.name, new SimpleHandler() {
+          public void handle() {
+            log.info("undeployed");
+            redeploy(deployment, deployments);
+          }
+        });
+      } else {
+        // This will be the case if the previous deployment failed, e.g.
+        // a code error in a user verticle
+        redeploy(deployment, deployments);
+      }
     }
+  }
+
+  private void redeploy(final Deployment deployment, final Set<Deployment> deployments) {
+    verticleManager.deployMod(deployment.modName, deployment.config, deployment.instances,
+                              null, new Handler<String>() {
+      public void handle(String res) {
+        // We only remove the old deployment if the next deployment is successful -
+        // There may be an error in the users verticle preventing it from redeploying
+        // and when the error is corrected we want hot redeploy to automatically
+        // redeploy it again
+        synchronized (Redeployer2.this) {
+          deployments.remove(deployment);
+        }
+      }
+    });
   }
 
   private void handleEvent(WatchKey key, Set<Path> changed) {
