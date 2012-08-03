@@ -517,8 +517,8 @@ public class HttpTestClient extends TestClientBase {
       public void handle(HttpServerRequest req) {
         tu.checkContext();
         tu.azzert(req.headers().size() == 1);
-        tu.azzert(req.headers().get("Host").equals("localhost:8080"));
-        tu.azzert(req.headers().get("Host").equals("localhost:8080"));
+        tu.azzert(req.headers().get("host").equals("localhost:8080"));
+        tu.azzert(req.headers().get("host").equals("localhost:8080"));
         req.response.end();
       }
     });
@@ -565,6 +565,50 @@ public class HttpTestClient extends TestClientBase {
     } else {
       req.headers().putAll(headers);
     }
+    req.end();
+  }
+
+  public void testLowerCaseHeaders() {
+
+    startServer(new Handler<HttpServerRequest>() {
+      public void handle(HttpServerRequest req) {
+        tu.checkContext();
+        tu.azzert(req.headers().get("Foo").equals("foo"));
+        tu.azzert(req.headers().get("foo").equals("foo"));
+        tu.azzert(req.headers().get("fOO").equals("foo"));
+        tu.azzert(req.headers().containsKey("Foo"));
+        tu.azzert(req.headers().containsKey("foo"));
+        tu.azzert(req.headers().containsKey("fOO"));
+        req.response.putHeader("Quux", "quux");
+        tu.azzert(req.response.headers().get("Quux").equals("quux"));
+        tu.azzert(req.response.headers().get("quux").equals("quux"));
+        tu.azzert(req.response.headers().get("qUUX").equals("quux"));
+        tu.azzert(req.response.headers().containsKey("Quux"));
+        tu.azzert(req.response.headers().containsKey("quux"));
+        tu.azzert(req.response.headers().containsKey("qUUX"));
+        req.response.end();
+      }
+    });
+
+    HttpClientRequest req = getRequest(true, "GET", "some-uri", new Handler<HttpClientResponse>() {
+      public void handle(HttpClientResponse resp) {
+        tu.azzert(resp.headers().get("Quux").equals("quux"));
+        tu.azzert(resp.headers().get("quux").equals("quux"));
+        tu.azzert(resp.headers().get("qUUX").equals("quux"));
+        tu.azzert(resp.headers().containsKey("Quux"));
+        tu.azzert(resp.headers().containsKey("quux"));
+        tu.azzert(resp.headers().containsKey("qUUX"));
+        tu.checkContext();
+        tu.testComplete();
+      }
+    });
+    req.putHeader("Foo", "foo");
+    tu.azzert(req.headers().get("Foo").equals("foo"));
+    tu.azzert(req.headers().get("foo").equals("foo"));
+    tu.azzert(req.headers().get("fOO").equals("foo"));
+    tu.azzert(req.headers().containsKey("Foo"));
+    tu.azzert(req.headers().containsKey("foo"));
+    tu.azzert(req.headers().containsKey("fOO"));
     req.end();
   }
 
@@ -1692,8 +1736,8 @@ public class HttpTestClient extends TestClientBase {
     client.getNow("some-uri", new Handler<HttpClientResponse>() {
       public void handle(final HttpClientResponse response) {
         tu.azzert(response.statusCode == 200);
-        tu.azzert(file.length() == Long.valueOf(response.headers().get("Content-Length")));
-        tu.azzert("text/html".equals(response.headers().get("Content-Type")));
+        tu.azzert(file.length() == Long.valueOf(response.headers().get("content-length")));
+        tu.azzert("text/html".equals(response.headers().get("content-type")));
         response.bodyHandler(new Handler<Buffer>() {
           public void handle(Buffer buff) {
             tu.azzert(content.equals(buff.toString()));
@@ -1719,8 +1763,8 @@ public class HttpTestClient extends TestClientBase {
     client.getNow("some-uri", new Handler<HttpClientResponse>() {
       public void handle(final HttpClientResponse response) {
         tu.azzert(response.statusCode == 200);
-        tu.azzert(file.length() == Long.valueOf(response.headers().get("Content-Length")));
-        tu.azzert("wibble".equals(response.headers().get("Content-Type")));
+        tu.azzert(file.length() == Long.valueOf(response.headers().get("content-length")));
+        tu.azzert("wibble".equals(response.headers().get("content-type")));
         response.bodyHandler(new Handler<Buffer>() {
           public void handle(Buffer buff) {
             tu.azzert(content.equals(buff.toString()));
@@ -2137,7 +2181,7 @@ public class HttpTestClient extends TestClientBase {
     for (int i = 0; i < num; i++) {
       String key;
       do {
-        key = TestUtils.randomAlphaString(1 + (int) ((19) * Math.random()));
+        key = TestUtils.randomAlphaString(1 + (int) ((19) * Math.random())).toLowerCase();
       } while (map.containsKey(key));
       map.put(key, TestUtils.randomAlphaString(1 + (int) ((19) * Math.random())));
     }

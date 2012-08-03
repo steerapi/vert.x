@@ -57,7 +57,7 @@ class JsonPTransport extends BaseTransport {
         }
 
         String sessionID = req.params().get("param0");
-        Session session = getSession((Long)config.getNumber("session_timeout"), (Long)config.getNumber("heartbeat_period"), sessionID, sockHandler);
+        Session session = getSession(config.getLong("session_timeout"), config.getLong("heartbeat_period"), sessionID, sockHandler);
         session.register(new JsonPListener(req, session, callback));
       }
     });
@@ -87,10 +87,10 @@ class JsonPTransport extends BaseTransport {
         String body = buff.toString();
 
         boolean urlEncoded;
-        String ct = req.headers().get("Content-Type");
-        if (ct.equalsIgnoreCase("application/x-www-form-urlencoded")) {
+        String ct = req.headers().get("content-type");
+        if ("application/x-www-form-urlencoded".equalsIgnoreCase(ct)) {
           urlEncoded = true;
-        } else if (ct.equals("text/plain")) {
+        } else if ("text/plain".equalsIgnoreCase(ct)) {
           urlEncoded = false;
         } else {
           req.response.statusCode = 500;
